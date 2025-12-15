@@ -1864,8 +1864,12 @@ class RotatingClient:
                                     lib_logger.error(
                                         f"Non-recoverable error ({classified_error.error_type}) during custom stream. Failing."
                                     )
-                                    raise last_exception
-
+                                    # Fatal client error - report to client and stop
+                                    client_error_message = f"Request failed: {error_message} (Type: {classified_error.error_type})"
+                                    yield f"data: {json.dumps({'error': {'message': client_error_message, 'type': classified_error.error_type}})}\n\n"
+                                    yield "data: [DONE]\n\n"
+                                    return
+    
                                 # Handle rate limits with cooldown (exclude quota_exceeded)
                                 if classified_error.error_type == "rate_limit":
                                     cooldown_duration = (

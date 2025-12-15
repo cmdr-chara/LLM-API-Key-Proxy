@@ -6,6 +6,7 @@ import uuid
 from typing import Literal, Dict, Optional
 import logging
 
+from rotator_library.model_info_service import get_model_info_service
 from .provider_urls import get_provider_endpoint
 
 # Try to import Rich console for beautiful output
