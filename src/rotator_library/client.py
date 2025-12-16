@@ -10,6 +10,7 @@ import litellm
 from litellm.exceptions import APIConnectionError
 from litellm.litellm_core_utils.token_counter import token_counter
 import logging
+from pathlib import Path
 from typing import List, Dict, Any, AsyncGenerator, Optional, Union
 
 lib_logger = logging.getLogger("rotator_library")
@@ -19,9 +20,10 @@ lib_logger = logging.getLogger("rotator_library")
 lib_logger.propagate = False
 
 from .usage_manager import UsageManager
-from .failure_logger import log_failure
+from .failure_logger import log_failure, configure_failure_logger
 from .error_handler import (
     PreRequestCallbackError,
+    CredentialNeedsReauthError,
     classify_error,
     AllProviders,
     NoAvailableKeysError,
@@ -37,6 +39,7 @@ from .cooldown_manager import CooldownManager
 from .credential_manager import CredentialManager
 from .background_refresher import BackgroundRefresher
 from .model_definitions import ModelDefinitions
+from .utils.paths import get_default_root, get_logs_dir, get_oauth_dir, get_data_file
 
 
 class StreamedAPIError(Exception):
@@ -58,7 +61,7 @@ class RotatingClient:
         api_keys: Optional[Dict[str, List[str]]] = None,
         oauth_credentials: Optional[Dict[str, List[str]]] = None,
         max_retries: int = 2,
-        usage_file_path: str = "key_usage.json",
+        usage_file_path: Optional[Union[str, Path]] = None,
         configure_logging: bool = True,
         global_timeout: int = 30,
         abort_on_callback_error: bool = True,
@@ -68,6 +71,7 @@ class RotatingClient:
         enable_request_logging: bool = False,
         max_concurrent_requests_per_key: Optional[Dict[str, int]] = None,
         rotation_tolerance: float = 3.0,
+        data_dir: Optional[Union[str, Path]] = None,
     ):
         """
         Initialize the RotatingClient with intelligent credential rotation.
@@ -76,7 +80,7 @@ class RotatingClient:
             api_keys: Dictionary mapping provider names to lists of API keys
             oauth_credentials: Dictionary mapping provider names to OAuth credential paths
             max_retries: Maximum number of retry attempts per credential
-            usage_file_path: Path to store usage statistics
+            usage_file_path: Path to store usage statistics. If None, uses data_dir/key_usage.json
             configure_logging: Whether to configure library logging
             global_timeout: Global timeout for requests in seconds
             abort_on_callback_error: Whether to abort on pre-request callback errors
@@ -89,7 +93,18 @@ class RotatingClient:
                 - 0.0: Deterministic, least-used credential always selected
                 - 2.0 - 4.0 (default, recommended): Balanced randomness, can pick credentials within 2 uses of max
                 - 5.0+: High randomness, more unpredictable selection patterns
+            data_dir: Root directory for all data files (logs, cache, oauth_creds, key_usage.json).
+                      If None, auto-detects: EXE directory if frozen, else current working directory.
         """
+        # Resolve data_dir early - this becomes the root for all file operations
+        if data_dir is not None:
+            self.data_dir = Path(data_dir).resolve()
+        else:
+            self.data_dir = get_default_root()
+
+        # Configure failure logger to use correct logs directory
+        configure_failure_logger(get_logs_dir(self.data_dir))
+
         os.environ["LITELLM_LOG"] = "ERROR"
         litellm.set_verbose = False
         litellm.drop_params = True
@@ -124,7 +139,9 @@ class RotatingClient:
         if oauth_credentials:
             self.oauth_credentials = oauth_credentials
         else:
-            self.credential_manager = CredentialManager(os.environ)
+            self.credential_manager = CredentialManager(
+                os.environ, oauth_dir=get_oauth_dir(self.data_dir)
+            )
             self.oauth_credentials = self.credential_manager.discover_and_prepare()
         self.background_refresher = BackgroundRefresher(self)
         self.oauth_providers = set(self.oauth_credentials.keys())
@@ -159,7 +176,7 @@ class RotatingClient:
 
             provider_rotation_modes[provider] = mode
             if mode != "balanced":
-                lib_logger.debug(f"Provider '{provider}' using rotation mode: {mode}")
+                lib_logger.info(f"Provider '{provider}' using rotation mode: {mode}")
 
         # Build priority-based concurrency multiplier maps
         # These are universal multipliers based on credential tier/priority
@@ -211,7 +228,7 @@ class RotatingClient:
                                 priority_multipliers_by_mode[provider][mode][
                                     priority
                                 ] = multiplier
-                                lib_logger.debug(
+                                lib_logger.info(
                                     f"Provider '{provider}' priority {priority} ({mode} mode) multiplier: {multiplier}x"
                                 )
                             else:
@@ -223,7 +240,7 @@ class RotatingClient:
                             if provider not in priority_multipliers:
                                 priority_multipliers[provider] = {}
                             priority_multipliers[provider][priority] = multiplier
-                            lib_logger.debug(
+                            lib_logger.info(
                                 f"Provider '{provider}' priority {priority} multiplier: {multiplier}x"
                             )
                     except ValueError:
@@ -231,19 +248,25 @@ class RotatingClient:
                             f"Invalid {key}: {value}. Could not parse priority or multiplier."
                         )
 
-        # Log configured multipliers (debug level to avoid startup noise)
+        # Log configured multipliers
         for provider, multipliers in priority_multipliers.items():
             if multipliers:
-                lib_logger.debug(
+                lib_logger.info(
                     f"Provider '{provider}' priority multipliers: {multipliers}"
                 )
         for provider, fallback in sequential_fallback_multipliers.items():
-            lib_logger.debug(
+            lib_logger.info(
                 f"Provider '{provider}' sequential fallback multiplier: {fallback}x"
             )
 
+        # Resolve usage file path - use provided path or default to data_dir
+        if usage_file_path is not None:
+            resolved_usage_path = Path(usage_file_path)
+        else:
+            resolved_usage_path = self.data_dir / "key_usage.json"
+
         self.usage_manager = UsageManager(
-            file_path=usage_file_path,
+            file_path=resolved_usage_path,
             rotation_tolerance=rotation_tolerance,
             provider_rotation_modes=provider_rotation_modes,
             provider_plugins=PROVIDER_PLUGINS,
@@ -654,7 +677,7 @@ class RotatingClient:
         try:
             while True:
                 if request and await request.is_disconnected():
-                    lib_logger.debug(
+                    lib_logger.info(
                         f"Client disconnected. Aborting stream for credential {mask_credential(key)}."
                     )
                     break
@@ -719,7 +742,7 @@ class RotatingClient:
                 except StopAsyncIteration:
                     stream_completed = True
                     if json_buffer:
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Stream ended with incomplete data in buffer: {json_buffer}"
                         )
                     if last_usage:
@@ -732,6 +755,12 @@ class RotatingClient:
                         # If no usage seen (rare), record success without tokens/cost
                         await self.usage_manager.record_success(key, model)
                     break
+
+                except CredentialNeedsReauthError as e:
+                    # This credential needs re-authentication but re-auth is already queued.
+                    # Wrap it so the outer retry loop can rotate to the next credential.
+                    # No scary traceback needed - this is an expected recovery scenario.
+                    raise StreamedAPIError("Credential needs re-authentication", data=e)
 
                 except (
                     litellm.RateLimitError,
@@ -777,7 +806,7 @@ class RotatingClient:
                         parsed_data = json.loads(json_buffer)
 
                         # If parsing succeeds, we have the complete object.
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Successfully reassembled JSON from stream: {json_buffer}"
                         )
 
@@ -788,7 +817,7 @@ class RotatingClient:
 
                     except json.JSONDecodeError:
                         # This is the expected outcome if the JSON in the buffer is not yet complete.
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Buffer still incomplete. Waiting for more chunks: {json_buffer}"
                         )
                         continue  # Continue to the next loop to get the next chunk.
@@ -823,7 +852,7 @@ class RotatingClient:
             # This block now runs regardless of how the stream terminates (completion, client disconnect, etc.).
             # The primary goal is to ensure usage is always logged internally.
             await self.usage_manager.release_key(key, model)
-            lib_logger.debug(
+            lib_logger.info(
                 f"STREAM FINISHED and lock released for credential {mask_credential(key)}."
             )
 
@@ -884,7 +913,7 @@ class RotatingClient:
         # This ensures consistent model ID usage for acquisition, release, and tracking
         resolved_model = self._resolve_model_id(model, provider)
         if resolved_model != model:
-            lib_logger.debug(f"Resolved model '{model}' to '{resolved_model}'")
+            lib_logger.info(f"Resolved model '{model}' to '{resolved_model}'")
             model = resolved_model
             kwargs["model"] = model  # Ensure kwargs has the resolved model for litellm
 
@@ -920,17 +949,17 @@ class RotatingClient:
                 if tier_compatible_creds:
                     credentials_for_provider = tier_compatible_creds
                     if compatible_creds and unknown_creds:
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Model {model} requires priority <= {required_tier}. "
                             f"Using {len(compatible_creds)} known-compatible + {len(unknown_creds)} unknown-tier credentials."
                         )
                     elif compatible_creds:
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Model {model} requires priority <= {required_tier}. "
                             f"Using {len(compatible_creds)} known-compatible credentials."
                         )
                     else:
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Model {model} requires priority <= {required_tier}. "
                             f"Using {len(unknown_creds)} unknown-tier credentials (will discover on use)."
                         )
@@ -998,7 +1027,7 @@ class RotatingClient:
                 if not creds_to_try:
                     break
 
-                lib_logger.debug(
+                lib_logger.info(
                     f"Acquiring key for model {model}. Tried keys: {len(tried_creds)}/{len(credentials_for_provider)}"
                 )
                 max_concurrent = self.max_concurrent_requests_per_key.get(provider, 1)
@@ -1068,7 +1097,7 @@ class RotatingClient:
                     # Retry loop for custom providers - mirrors streaming path error handling
                     for attempt in range(self.max_retries):
                         try:
-                            lib_logger.debug(
+                            lib_logger.info(
                                 f"Attempting call with credential {mask_credential(current_cred)} (Attempt {attempt + 1}/{self.max_retries})"
                             )
 
@@ -1298,7 +1327,7 @@ class RotatingClient:
 
                     for attempt in range(self.max_retries):
                         try:
-                            lib_logger.debug(
+                            lib_logger.info(
                                 f"Attempting call with credential {mask_credential(current_cred)} (Attempt {attempt + 1}/{self.max_retries})"
                             )
 
@@ -1353,7 +1382,7 @@ class RotatingClient:
                                 current_cred, classified_error, error_message
                             )
 
-                            lib_logger.debug(
+                            lib_logger.info(
                                 f"Key {mask_credential(current_cred)} hit rate limit for {model}. Rotating key."
                             )
 
@@ -1489,7 +1518,7 @@ class RotatingClient:
                             await self.usage_manager.record_failure(
                                 current_cred, model, classified_error
                             )
-                            lib_logger.debug(
+                            lib_logger.info(
                                 f"Rotating to next key after {classified_error.error_type} error."
                             )
                             break
@@ -1605,7 +1634,7 @@ class RotatingClient:
         # This ensures consistent model ID usage for acquisition, release, and tracking
         resolved_model = self._resolve_model_id(model, provider)
         if resolved_model != model:
-            lib_logger.debug(f"Resolved model '{model}' to '{resolved_model}'")
+            lib_logger.info(f"Resolved model '{model}' to '{resolved_model}'")
             model = resolved_model
             kwargs["model"] = model  # Ensure kwargs has the resolved model for litellm
 
@@ -1641,17 +1670,17 @@ class RotatingClient:
                 if tier_compatible_creds:
                     credentials_for_provider = tier_compatible_creds
                     if compatible_creds and unknown_creds:
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Model {model} requires priority <= {required_tier}. "
                             f"Using {len(compatible_creds)} known-compatible + {len(unknown_creds)} unknown-tier credentials."
                         )
                     elif compatible_creds:
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Model {model} requires priority <= {required_tier}. "
                             f"Using {len(compatible_creds)} known-compatible credentials."
                         )
                     else:
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Model {model} requires priority <= {required_tier}. "
                             f"Using {len(unknown_creds)} unknown-tier credentials (will discover on use)."
                         )
@@ -1720,7 +1749,7 @@ class RotatingClient:
                         )
                         break
 
-                    lib_logger.debug(
+                    lib_logger.info(
                         f"Acquiring credential for model {model}. Tried credentials: {len(tried_creds)}/{len(credentials_for_provider)}"
                     )
                     max_concurrent = self.max_concurrent_requests_per_key.get(
@@ -1795,7 +1824,7 @@ class RotatingClient:
 
                         for attempt in range(self.max_retries):
                             try:
-                                lib_logger.debug(
+                                lib_logger.info(
                                     f"Attempting stream with credential {mask_credential(current_cred)} (Attempt {attempt + 1}/{self.max_retries})"
                                 )
 
@@ -1818,7 +1847,7 @@ class RotatingClient:
                                     self.http_client, **litellm_kwargs
                                 )
 
-                                lib_logger.debug(
+                                lib_logger.info(
                                     f"Stream connection established for credential {mask_credential(current_cred)}. Processing response."
                                 )
 
@@ -1864,12 +1893,8 @@ class RotatingClient:
                                     lib_logger.error(
                                         f"Non-recoverable error ({classified_error.error_type}) during custom stream. Failing."
                                     )
-                                    # Fatal client error - report to client and stop
-                                    client_error_message = f"Request failed: {error_message} (Type: {classified_error.error_type})"
-                                    yield f"data: {json.dumps({'error': {'message': client_error_message, 'type': classified_error.error_type}})}\n\n"
-                                    yield "data: [DONE]\n\n"
-                                    return
-    
+                                    raise last_exception
+
                                 # Handle rate limits with cooldown (exclude quota_exceeded)
                                 if classified_error.error_type == "rate_limit":
                                     cooldown_duration = (
@@ -2038,7 +2063,7 @@ class RotatingClient:
 
                     for attempt in range(self.max_retries):
                         try:
-                            lib_logger.debug(
+                            lib_logger.info(
                                 f"Attempting stream with credential {mask_credential(current_cred)} (Attempt {attempt + 1}/{self.max_retries})"
                             )
 
@@ -2066,7 +2091,7 @@ class RotatingClient:
                                 logger_fn=self._litellm_logger_callback,
                             )
 
-                            lib_logger.debug(
+                            lib_logger.info(
                                 f"Stream connection established for credential {mask_credential(current_cred)}. Processing response."
                             )
 
@@ -2308,7 +2333,7 @@ class RotatingClient:
                             await self.usage_manager.record_failure(
                                 current_cred, model, classified_error
                             )
-                            lib_logger.debug(
+                            lib_logger.info(
                                 f"Rotating to next key after {classified_error.error_type} error."
                             )
                             break
@@ -2458,7 +2483,7 @@ class RotatingClient:
 
     async def get_available_models(self, provider: str) -> List[str]:
         """Returns a list of available models for a specific provider, with caching."""
-        lib_logger.debug(f"Getting available models for provider: {provider}")
+        lib_logger.info(f"Getting available models for provider: {provider}")
         if provider in self._model_list_cache:
             lib_logger.debug(f"Returning cached models for provider: {provider}")
             return self._model_list_cache[provider]
@@ -2488,7 +2513,7 @@ class RotatingClient:
                     models = await provider_instance.get_models(
                         credential, self.http_client
                     )
-                    lib_logger.debug(
+                    lib_logger.info(
                         f"Got {len(models)} models for provider: {provider}"
                     )
 
@@ -2506,7 +2531,7 @@ class RotatingClient:
                             final_models.append(m)
 
                     if len(final_models) != len(models):
-                        lib_logger.debug(
+                        lib_logger.info(
                             f"Filtered out {len(models) - len(final_models)} models for provider {provider}."
                         )
 
@@ -2529,7 +2554,7 @@ class RotatingClient:
         self, grouped: bool = True
     ) -> Union[Dict[str, List[str]], List[str]]:
         """Returns a list of all available models, either grouped by provider or as a flat list."""
-        lib_logger.debug("Getting all available models...")
+        lib_logger.info("Getting all available models...")
 
         all_providers = list(self.all_credentials.keys())
         tasks = [self.get_available_models(provider) for provider in all_providers]
@@ -2545,7 +2570,7 @@ class RotatingClient:
             else:
                 all_provider_models[provider] = result
 
-        lib_logger.debug("Finished getting all available models.")
+        lib_logger.info("Finished getting all available models.")
         if grouped:
             return all_provider_models
         else:

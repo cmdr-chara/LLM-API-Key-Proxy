@@ -22,9 +22,12 @@ parser.add_argument(
     action="store_true",
     help="Launch the interactive tool to add a new OAuth credential.",
 )
+<<<<<<< HEAD
 parser.add_argument(
     "--verbose", "-v", action="store_true", help="Enable verbose output during startup."
 )
+=======
+>>>>>>> origin/main
 args, _ = parser.parse_known_args()
 
 # Add the 'src' directory to the Python path
@@ -55,6 +58,7 @@ _start_time = time.time()
 from dotenv import load_dotenv
 from glob import glob
 
+<<<<<<< HEAD
 # Load main .env first
 load_dotenv()
 
@@ -118,6 +122,60 @@ with console.status("[dim]Loading dependencies...[/]", spinner="dots") as status
 
     if _verbose:
         status.update("[dim]Loading core dependencies...[/]")
+=======
+# Get the application root directory (EXE dir if frozen, else CWD)
+# Inlined here to avoid triggering heavy rotator_library imports before loading screen
+if getattr(sys, "frozen", False):
+    _root_dir = Path(sys.executable).parent
+else:
+    _root_dir = Path.cwd()
+
+# Load main .env first
+load_dotenv(_root_dir / ".env")
+
+# Load any additional .env files (e.g., antigravity_all_combined.env, gemini_cli_all_combined.env)
+_env_files_found = list(_root_dir.glob("*.env"))
+for _env_file in sorted(_root_dir.glob("*.env")):
+    if _env_file.name != ".env":  # Skip main .env (already loaded)
+        load_dotenv(_env_file, override=False)  # Don't override existing values
+
+# Log discovered .env files for deployment verification
+if _env_files_found:
+    _env_names = [_ef.name for _ef in _env_files_found]
+    print(f"📁 Loaded {len(_env_files_found)} .env file(s): {', '.join(_env_names)}")
+
+# Get proxy API key for display
+proxy_api_key = os.getenv("PROXY_API_KEY")
+if proxy_api_key:
+    key_display = f"✓ {proxy_api_key}"
+else:
+    key_display = "✗ Not Set (INSECURE - anyone can access!)"
+
+print("━" * 70)
+print(f"Starting proxy on {args.host}:{args.port}")
+print(f"Proxy API Key: {key_display}")
+print(f"GitHub: https://github.com/Mirrowel/LLM-API-Key-Proxy")
+print("━" * 70)
+print("Loading server components...")
+
+
+# Phase 2: Load Rich for loading spinner (lightweight)
+from rich.console import Console
+
+_console = Console()
+
+# Phase 3: Heavy dependencies with granular loading messages
+print("  → Loading FastAPI framework...")
+with _console.status("[dim]Loading FastAPI framework...", spinner="dots"):
+    from contextlib import asynccontextmanager
+    from fastapi import FastAPI, Request, HTTPException, Depends
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import StreamingResponse
+    from fastapi.security import APIKeyHeader
+
+print("  → Loading core dependencies...")
+with _console.status("[dim]Loading core dependencies...", spinner="dots"):
+>>>>>>> origin/main
     from dotenv import load_dotenv
     import colorlog
     import json
@@ -127,16 +185,27 @@ with console.status("[dim]Loading dependencies...[/]", spinner="dots") as status
     # --- Early Log Level Configuration ---
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
+<<<<<<< HEAD
     if _verbose:
         status.update("[dim]Loading LiteLLM library...[/]")
     import litellm
 
     if _verbose:
         status.update("[dim]Initializing proxy core...[/]")
+=======
+print("  → Loading LiteLLM library...")
+with _console.status("[dim]Loading LiteLLM library...", spinner="dots"):
+    import litellm
+
+# Phase 4: Application imports with granular loading messages
+print("  → Initializing proxy core...")
+with _console.status("[dim]Initializing proxy core...", spinner="dots"):
+>>>>>>> origin/main
     from rotator_library import RotatingClient
     from rotator_library.credential_manager import CredentialManager
     from rotator_library.background_refresher import BackgroundRefresher
     from rotator_library.model_info_service import init_model_info_service
+<<<<<<< HEAD
     from proxy_app.request_logger import log_request_to_console, log_response_to_console
     from proxy_app.batch_manager import EmbeddingBatcher
     from proxy_app.detailed_logger import DetailedLogger
@@ -148,6 +217,20 @@ with console.status("[dim]Loading dependencies...[/]", spinner="dots") as status
         PROVIDER_PLUGINS,
     )  # This triggers lazy load via __getattr__
     _provider_time = time.time() - _provider_start
+=======
+    from proxy_app.request_logger import log_request_to_console
+    from proxy_app.batch_manager import EmbeddingBatcher
+    from proxy_app.detailed_logger import DetailedLogger
+
+print("  → Discovering provider plugins...")
+# Provider lazy loading happens during import, so time it here
+_provider_start = time.time()
+with _console.status("[dim]Discovering provider plugins...", spinner="dots"):
+    from rotator_library import (
+        PROVIDER_PLUGINS,
+    )  # This triggers lazy load via __getattr__
+_provider_time = time.time() - _provider_start
+>>>>>>> origin/main
 
 # Get count after import (without timing to avoid double-counting)
 _plugin_count = len(PROVIDER_PLUGINS)
@@ -228,12 +311,57 @@ class EnrichedModelList(BaseModel):
 
 # Calculate total loading time
 _elapsed = time.time() - _start_time
+<<<<<<< HEAD
+=======
+print(
+    f"✓ Server ready in {_elapsed:.2f}s ({_plugin_count} providers discovered in {_provider_time:.2f}s)"
+)
+
+# Clear screen and reprint header for clean startup view
+# This pushes loading messages up (still in scroll history) but shows a clean final screen
+import os as _os_module
+
+_os_module.system("cls" if _os_module.name == "nt" else "clear")
+
+# Reprint header
+print("━" * 70)
+print(f"Starting proxy on {args.host}:{args.port}")
+print(f"Proxy API Key: {key_display}")
+print(f"GitHub: https://github.com/Mirrowel/LLM-API-Key-Proxy")
+print("━" * 70)
+print(
+    f"✓ Server ready in {_elapsed:.2f}s ({_plugin_count} providers discovered in {_provider_time:.2f}s)"
+)
+
+>>>>>>> origin/main
 
 # Note: Debug logging will be added after logging configuration below
 
 # --- Logging Configuration ---
+<<<<<<< HEAD
 LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
+=======
+# Import path utilities here (after loading screen) to avoid triggering heavy imports early
+from rotator_library.utils.paths import get_logs_dir, get_data_file
+
+LOG_DIR = get_logs_dir(_root_dir)
+
+# Configure a console handler with color (INFO and above only, no DEBUG)
+console_handler = colorlog.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+formatter = colorlog.ColoredFormatter(
+    "%(log_color)s%(message)s",
+    log_colors={
+        "DEBUG": "cyan",
+        "INFO": "green",
+        "WARNING": "yellow",
+        "ERROR": "red",
+        "CRITICAL": "red,bg_white",
+    },
+)
+console_handler.setFormatter(formatter)
+>>>>>>> origin/main
 
 # Configure a file handler for INFO-level logs and higher
 info_file_handler = logging.FileHandler(LOG_DIR / "proxy.log", encoding="utf-8")
@@ -260,6 +388,7 @@ class RotatorDebugFilter(logging.Filter):
 
 debug_file_handler.addFilter(RotatorDebugFilter())
 
+<<<<<<< HEAD
 
 # Custom console handler that filters out verbose startup messages and deduplicates
 class CleanConsoleHandler(logging.Handler):
@@ -428,6 +557,31 @@ class CleanConsoleHandler(logging.Handler):
 
 console_handler = CleanConsoleHandler()
 console_handler.setFormatter(logging.Formatter("%(message)s"))
+=======
+# Configure a console handler with color
+console_handler = colorlog.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+formatter = colorlog.ColoredFormatter(
+    "%(log_color)s%(message)s",
+    log_colors={
+        "DEBUG": "cyan",
+        "INFO": "green",
+        "WARNING": "yellow",
+        "ERROR": "red",
+        "CRITICAL": "red,bg_white",
+    },
+)
+console_handler.setFormatter(formatter)
+
+
+# Add a filter to prevent any LiteLLM logs from cluttering the console
+class NoLiteLLMLogFilter(logging.Filter):
+    def filter(self, record):
+        return not record.name.startswith("LiteLLM")
+
+
+console_handler.addFilter(NoLiteLLMLogFilter())
+>>>>>>> origin/main
 
 # Get the root logger and set it to DEBUG to capture all messages
 root_logger = logging.getLogger()
@@ -440,10 +594,14 @@ root_logger.addHandler(debug_file_handler)
 
 # Silence other noisy loggers by setting their level higher than root
 logging.getLogger("uvicorn").setLevel(logging.WARNING)
+<<<<<<< HEAD
 logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.CRITICAL)  # Completely suppress access logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+=======
+logging.getLogger("httpx").setLevel(logging.WARNING)
+>>>>>>> origin/main
 
 # Isolate LiteLLM's logger to prevent it from reaching the console.
 # We will capture its logs via the logger_fn callback in the client instead.
@@ -455,7 +613,11 @@ litellm_logger.propagate = False
 logging.debug(f"Modules loaded in {_elapsed:.2f}s")
 
 # Load environment variables from .env file
+<<<<<<< HEAD
 load_dotenv()
+=======
+load_dotenv(_root_dir / ".env")
+>>>>>>> origin/main
 
 # --- Configuration ---
 USE_EMBEDDING_BATCHER = False
@@ -535,7 +697,11 @@ async def lifespan(app: FastAPI):
     oauth_credentials = cred_manager.discover_and_prepare()
 
     if not skip_oauth_init and oauth_credentials:
+<<<<<<< HEAD
         logging.debug("Starting OAuth credential validation and deduplication...")
+=======
+        logging.info("Starting OAuth credential validation and deduplication...")
+>>>>>>> origin/main
         processed_emails = {}  # email -> {provider: path}
         credentials_to_initialize = {}  # provider -> [paths]
         final_oauth_credentials = {}
@@ -680,7 +846,11 @@ async def lifespan(app: FastAPI):
                     except Exception as e:
                         logging.error(f"Failed to update metadata for '{path}': {e}")
 
+<<<<<<< HEAD
         logging.debug("OAuth credential processing complete.")
+=======
+        logging.info("OAuth credential processing complete.")
+>>>>>>> origin/main
         oauth_credentials = final_oauth_credentials
 
     # [NEW] Load provider-specific params
@@ -700,6 +870,7 @@ async def lifespan(app: FastAPI):
         max_concurrent_requests_per_key=max_concurrent_requests_per_key,
     )
 
+<<<<<<< HEAD
     # Print providers summary using the beautiful UI
     print_providers_summary(
         api_credentials=api_keys,
@@ -708,6 +879,14 @@ async def lifespan(app: FastAPI):
     )
     
     client.background_refresher.start() # Start the background task
+=======
+    # Log loaded credentials summary (compact, always visible for deployment verification)
+    # _api_summary = ', '.join([f"{p}:{len(c)}" for p, c in api_keys.items()]) if api_keys else "none"
+    # _oauth_summary = ', '.join([f"{p}:{len(c)}" for p, c in oauth_credentials.items()]) if oauth_credentials else "none"
+    # _total_summary = ', '.join([f"{p}:{len(c)}" for p, c in client.all_credentials.items()])
+    # print(f"🔑 Credentials loaded: {_total_summary} (API: {_api_summary} | OAuth: {_oauth_summary})")
+    client.background_refresher.start()  # Start the background task
+>>>>>>> origin/main
     app.state.rotating_client = client
 
     # Warn if no provider credentials are configured
@@ -728,15 +907,23 @@ async def lifespan(app: FastAPI):
     if USE_EMBEDDING_BATCHER:
         batcher = EmbeddingBatcher(client=client)
         app.state.embedding_batcher = batcher
+<<<<<<< HEAD
         logging.debug("RotatingClient and EmbeddingBatcher initialized.")
     else:
         app.state.embedding_batcher = None
         logging.debug("RotatingClient initialized (EmbeddingBatcher disabled).")
+=======
+        logging.info("RotatingClient and EmbeddingBatcher initialized.")
+    else:
+        app.state.embedding_batcher = None
+        logging.info("RotatingClient initialized (EmbeddingBatcher disabled).")
+>>>>>>> origin/main
 
     # Start model info service in background (fetches pricing/capabilities data)
     # This runs asynchronously and doesn't block proxy startup
     model_info_service = await init_model_info_service()
     app.state.model_info_service = model_info_service
+<<<<<<< HEAD
     
     # Print server ready message
     print_server_ready(_elapsed, _plugin_count, _provider_time)
@@ -744,6 +931,9 @@ async def lifespan(app: FastAPI):
     # Print listening message
     console.print(f"[dim]Press Ctrl+C to stop the server[/]")
     console.print()
+=======
+    logging.info("Model info service started (fetching pricing data in background).")
+>>>>>>> origin/main
 
     yield
 
@@ -757,9 +947,15 @@ async def lifespan(app: FastAPI):
         await app.state.model_info_service.stop()
 
     if app.state.embedding_batcher:
+<<<<<<< HEAD
         logging.debug("RotatingClient and EmbeddingBatcher closed.")
     else:
         logging.debug("RotatingClient closed.")
+=======
+        logging.info("RotatingClient and EmbeddingBatcher closed.")
+    else:
+        logging.info("RotatingClient closed.")
+>>>>>>> origin/main
 
 
 # --- FastAPI App Setup ---
@@ -775,6 +971,7 @@ app.add_middleware(
 )
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 
+<<<<<<< HEAD
 # Mount the web UI directory
 # Handle both development (src/proxy_app/web_ui) and PyInstaller (_MEI/web_ui) paths
 if getattr(sys, 'frozen', False):
@@ -789,6 +986,8 @@ if WEB_UI_DIR.exists():
 else:
     logging.warning(f"Web UI directory not found at {WEB_UI_DIR}. Dashboard will not be available.")
 
+=======
+>>>>>>> origin/main
 
 def get_rotating_client(request: Request) -> RotatingClient:
     """Dependency to get the rotating client instance from the app state."""
@@ -1204,6 +1403,7 @@ async def embeddings(
 
 
 @app.get("/")
+<<<<<<< HEAD
 async def read_root():
     """Redirect to the dashboard or show basic status."""
     # Serve the dashboard index.html directly at root if it exists
@@ -1211,13 +1411,21 @@ async def read_root():
     if index_path.exists():
          return FileResponse(index_path)
     return {"Status": "API Key Proxy is running (Dashboard not found)"}
+=======
+def read_root():
+    return {"Status": "API Key Proxy is running"}
+>>>>>>> origin/main
 
 
 @app.get("/v1/models")
 async def list_models(
     request: Request,
     client: RotatingClient = Depends(get_rotating_client),
+<<<<<<< HEAD
     # _=Depends(verify_api_key), # Allow public access to models list for dashboard
+=======
+    _=Depends(verify_api_key),
+>>>>>>> origin/main
     enriched: bool = True,
 ):
     """
@@ -1290,6 +1498,7 @@ async def model_info_stats(
     return {"error": "Model info service not initialized"}
 
 
+<<<<<<< HEAD
 @app.get("/v1/system/status")
 async def system_status(request: Request):
     """
@@ -1315,6 +1524,10 @@ async def system_status(request: Request):
 
 @app.get("/v1/providers")
 async def list_providers():
+=======
+@app.get("/v1/providers")
+async def list_providers(_=Depends(verify_api_key)):
+>>>>>>> origin/main
     """
     Returns a list of all available providers.
     """
@@ -1444,8 +1657,13 @@ async def cost_estimate(request: Request, _=Depends(verify_api_key)):
 
 
 if __name__ == "__main__":
+<<<<<<< HEAD
     # Define ENV_FILE for onboarding checks
     ENV_FILE = Path.cwd() / ".env"
+=======
+    # Define ENV_FILE for onboarding checks using centralized path
+    ENV_FILE = get_data_file(".env")
+>>>>>>> origin/main
 
     # Check if launcher TUI should be shown (no arguments provided)
     if len(sys.argv) == 1:
@@ -1508,11 +1726,19 @@ if __name__ == "__main__":
     # Check if user explicitly wants to add credentials
     if args.add_credential:
         # Import and call ensure_env_defaults to create .env and PROXY_API_KEY if needed
+<<<<<<< HEAD
         from rotator_library.credential_tool import ensure_env_defaults, run_credential_tool
 
         ensure_env_defaults()
         # Reload environment variables after ensure_env_defaults creates/updates .env
         load_dotenv(override=True)
+=======
+        from rotator_library.credential_tool import ensure_env_defaults
+
+        ensure_env_defaults()
+        # Reload environment variables after ensure_env_defaults creates/updates .env
+        load_dotenv(ENV_FILE, override=True)
+>>>>>>> origin/main
         run_credential_tool()
     else:
         # Check if onboarding is needed
@@ -1527,6 +1753,7 @@ if __name__ == "__main__":
             show_onboarding_message()
 
             # Launch credential tool automatically
+<<<<<<< HEAD
             from rotator_library.credential_tool import ensure_env_defaults, run_credential_tool
 
             ensure_env_defaults()
@@ -1535,6 +1762,16 @@ if __name__ == "__main__":
 
             # After credential tool exits, reload and re-check
             load_dotenv(override=True)
+=======
+            from rotator_library.credential_tool import ensure_env_defaults
+
+            ensure_env_defaults()
+            load_dotenv(ENV_FILE, override=True)
+            run_credential_tool()
+
+            # After credential tool exits, reload and re-check
+            load_dotenv(ENV_FILE, override=True)
+>>>>>>> origin/main
             # Re-read PROXY_API_KEY from environment
             PROXY_API_KEY = os.getenv("PROXY_API_KEY")
 
@@ -1551,6 +1788,7 @@ if __name__ == "__main__":
 
         import uvicorn
 
+<<<<<<< HEAD
         uvicorn.run(
             app,
             host=args.host,
@@ -1558,3 +1796,6 @@ if __name__ == "__main__":
             access_log=False,  # Disable uvicorn's access logging (we have our own)
             log_level="warning"  # Only show warnings and errors from uvicorn
         )
+=======
+        uvicorn.run(app, host=args.host, port=args.port)
+>>>>>>> origin/main

@@ -7,33 +7,27 @@ import json
 import os
 import sys
 from pathlib import Path
-from rich.console import Console, Group
+from rich.console import Console
 from rich.prompt import IntPrompt, Prompt
 from rich.panel import Panel
 from rich.text import Text
-from rich.table import Table
-from rich.layout import Layout
-from rich import box
-from rich.align import Align
-from rich.columns import Columns
-from rich.style import Style
-from rich.rule import Rule
 from dotenv import load_dotenv, set_key
 
 console = Console()
 
-# Modern color scheme
-COLORS = {
-    "primary": "bright_cyan",
-    "secondary": "bright_magenta",
-    "success": "bright_green",
-    "warning": "bright_yellow",
-    "error": "bright_red",
-    "accent": "bright_blue",
-    "muted": "dim white",
-    "text": "white",
-    "highlight": "bold bright_white",
-}
+
+def _get_env_file() -> Path:
+    """
+    Get .env file path (lightweight - no heavy imports).
+
+    Returns:
+        Path to .env file - EXE directory if frozen, else current working directory
+    """
+    if getattr(sys, "frozen", False):
+        # Running as PyInstaller EXE - use EXE's directory
+        return Path(sys.executable).parent / ".env"
+    # Running as script - use current working directory
+    return Path.cwd() / ".env"
 
 
 def clear_screen():
@@ -94,7 +88,7 @@ class LauncherConfig:
     @staticmethod
     def update_proxy_api_key(new_key: str):
         """Update PROXY_API_KEY in .env only"""
-        env_file = Path.cwd() / ".env"
+        env_file = _get_env_file()
         set_key(str(env_file), "PROXY_API_KEY", new_key)
         load_dotenv(dotenv_path=env_file, override=True)
 
@@ -104,45 +98,30 @@ class SettingsDetector:
 
     @staticmethod
     def _load_local_env() -> dict:
-        """Load environment variables from all .env files in cwd"""
+        """Load environment variables from local .env file only"""
+        env_file = _get_env_file()
         env_dict = {}
-        cwd = Path.cwd()
-        
-        # Find all .env files (main .env and any *.env files)
-        env_files = []
-        main_env = cwd / ".env"
-        if main_env.exists():
-            env_files.append(main_env)
-        
-        # Add any additional *.env files (combined env files)
-        for env_file in cwd.glob("*.env"):
-            if env_file not in env_files:
-                env_files.append(env_file)
-        
-        # Parse all env files
-        for env_file in env_files:
-            try:
-                with open(env_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        if "=" in line:
-                            key, _, value = line.partition("=")
-                            key, value = key.strip(), value.strip()
-                            if value and value[0] in ('"', "'") and value[-1] == value[0]:
-                                value = value[1:-1]
-                            # Don't override existing values (first file wins)
-                            if key not in env_dict:
-                                env_dict[key] = value
-            except (IOError, OSError):
-                pass
-        
+        if not env_file.exists():
+            return env_dict
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        key, _, value = line.partition("=")
+                        key, value = key.strip(), value.strip()
+                        if value and value[0] in ('"', "'") and value[-1] == value[0]:
+                            value = value[1:-1]
+                        env_dict[key] = value
+        except (IOError, OSError):
+            pass
         return env_dict
 
     @staticmethod
     def get_all_settings() -> dict:
-        """Returns comprehensive settings overview"""
+        """Returns comprehensive settings overview (includes provider_settings which triggers heavy imports)"""
         return {
             "credentials": SettingsDetector.detect_credentials(),
             "custom_bases": SettingsDetector.detect_custom_api_bases(),
@@ -150,6 +129,17 @@ class SettingsDetector:
             "concurrency_limits": SettingsDetector.detect_concurrency_limits(),
             "model_filters": SettingsDetector.detect_model_filters(),
             "provider_settings": SettingsDetector.detect_provider_settings(),
+        }
+
+    @staticmethod
+    def get_basic_settings() -> dict:
+        """Returns basic settings overview without provider_settings (avoids heavy imports)"""
+        return {
+            "credentials": SettingsDetector.detect_credentials(),
+            "custom_bases": SettingsDetector.detect_custom_api_bases(),
+            "model_definitions": SettingsDetector.detect_model_definitions(),
+            "concurrency_limits": SettingsDetector.detect_concurrency_limits(),
+            "model_filters": SettingsDetector.detect_model_filters(),
         }
 
     @staticmethod
@@ -295,9 +285,7 @@ class LauncherTUI:
         self.console = Console()
         self.config = LauncherConfig()
         self.running = True
-        self.env_file = Path.cwd() / ".env"
-        self._cached_settings = None
-        self._settings_cache_valid = False
+        self.env_file = _get_env_file()
         # Load .env file to ensure environment variables are available
         load_dotenv(dotenv_path=self.env_file, override=True)
 
@@ -305,214 +293,142 @@ class LauncherTUI:
         """Check if onboarding is needed"""
         return not self.env_file.exists() or not os.getenv("PROXY_API_KEY")
 
-    def _invalidate_settings_cache(self):
-        """Invalidate the settings cache to force a refresh"""
-        self._settings_cache_valid = False
-        self._cached_settings = None
-
-    def _get_settings(self, force_refresh: bool = False):
-        """Get settings with caching to avoid repeated file scans"""
-        if force_refresh or not self._settings_cache_valid or self._cached_settings is None:
-            self._cached_settings = SettingsDetector.get_all_settings()
-            self._settings_cache_valid = True
-        return self._cached_settings
-
     def run(self):
         """Main TUI loop"""
         while self.running:
             self.show_main_menu()
 
-    def _create_header(self):
-        """Create a modern styled header"""
-        title = Text()
-        title.append("⚡ ", style="bright_yellow")
-        title.append("LLM API Key Proxy", style="bold bright_white")
-        
-        subtitle = Text("Centralized Control for LLM Providers & Access", style="dim italic")
-        
-        header_content = Group(
-            Align.center(title),
-            Align.center(subtitle),
-        )
-        
-        return Panel(
-            header_content,
-            border_style="bright_blue",
-            box=box.DOUBLE,
-            padding=(1, 4),
-            expand=False
-        )
-
-    def _create_server_info_card(self):
-        """Create a compact server info card"""
-        host = self.config.config['host']
-        port = self.config.config['port']
-        logging_enabled = self.config.config['enable_request_logging']
-        proxy_key = os.getenv("PROXY_API_KEY")
-        
-        lines = []
-        lines.append(f"[bright_cyan]●[/bright_cyan] [bold]Server[/bold]  [white]http://{host}:{port}[/white]")
-        
-        if proxy_key:
-            # Show full API key without censorship
-            lines.append(f"[bright_green]●[/bright_green] [bold]API Key[/bold] [green]{proxy_key}[/green]")
-        else:
-            lines.append(f"[bright_red]●[/bright_red] [bold]API Key[/bold] [red]Not Set[/red] [dim](insecure)[/dim]")
-        
-        log_status = "[green]ON[/green]" if logging_enabled else "[dim]OFF[/dim]"
-        lines.append(f"[bright_blue]●[/bright_blue] [bold]Logging[/bold] {log_status}")
-        
-        return Panel(
-            "\n".join(lines),
-            title="[bold bright_white]⚙️  Server Config[/bold bright_white]",
-            title_align="left",
-            border_style="bright_blue",
-            box=box.ROUNDED,
-            padding=(1, 2),
-        )
-
-    def _create_status_card(self, settings, credentials, custom_bases):
-        """Create a status summary card"""
-        provider_count = len(credentials)
-        custom_count = len(custom_bases)
-        total_creds = sum(c.get("api_keys", 0) + c.get("oauth", 0) for c in credentials.values())
-        
-        provider_settings = settings.get("provider_settings", {})
-        has_advanced = bool(
-            settings["model_definitions"]
-            or settings["concurrency_limits"]
-            or settings["model_filters"]
-            or provider_settings
-        )
-        
-        lines = []
-        if provider_count > 0:
-            # Show providers with their names (truncated to first identifier)
-            provider_names = ", ".join(sorted(credentials.keys())[:4])
-            if len(credentials) > 4:
-                provider_names += f"... +{len(credentials) - 4}"
-            lines.append(f"[bright_green]●[/bright_green] [bold]Providers[/bold] [white]{provider_count}[/white] [dim]({provider_names})[/dim]")
-        else:
-            lines.append(f"[bright_yellow]○[/bright_yellow] [bold]Providers[/bold] [dim]None detected[/dim]")
-        
-        if custom_count > 0:
-            lines.append(f"[bright_green]●[/bright_green] [bold]Custom APIs[/bold] [white]{custom_count}[/white]")
-        else:
-            lines.append(f"[dim]○[/dim] [bold]Custom APIs[/bold] [dim]None[/dim]")
-        
-        if has_advanced:
-            lines.append(f"[bright_magenta]●[/bright_magenta] [bold]Advanced[/bold] [magenta]Configured[/magenta]")
-        else:
-            lines.append(f"[dim]○[/dim] [bold]Advanced[/bold] [dim]Default[/dim]")
-        
-        return Panel(
-            "\n".join(lines),
-            title="[bold bright_white]📊 Status[/bold bright_white]",
-            title_align="left",
-            border_style="bright_green",
-            box=box.ROUNDED,
-            padding=(1, 2),
-        )
-
-    def _create_menu(self, show_warning: bool):
-        """Create the main menu with modern styling"""
-        menu_items = [
-            ("1", "▶", "Run Proxy Server", "bright_green", None),
-            ("2", "⚙", "Configure Settings", "bright_blue", None),
-            ("3", "🔑", "Manage Credentials", "bright_yellow", "⬅ Start here!" if show_warning else None),
-            ("4", "📊", "Provider & Advanced", "bright_magenta", None),
-            ("5", "🔄", "Reload Config", "bright_cyan", None),
-            ("6", "ℹ", "About", "dim", None),
-            ("7", "✖", "Exit", "dim red", None),
-        ]
-        
-        lines = []
-        for num, icon, label, color, hint in menu_items:
-            hint_text = f" [bold yellow]{hint}[/bold yellow]" if hint else ""
-            lines.append(f"  [{color}]{num}[/{color}]  {icon}  {label}{hint_text}")
-        
-        return Panel(
-            "\n".join(lines),
-            title="[bold bright_white]📋 Menu[/bold bright_white]",
-            title_align="left",
-            border_style="bright_magenta",
-            box=box.ROUNDED,
-            padding=(1, 2),
-        )
-
     def show_main_menu(self):
         """Display main menu and handle selection"""
         clear_screen()
 
-        # Use cached settings for faster menu display
-        settings = self._get_settings()
+        # Detect basic settings (excludes provider_settings to avoid heavy imports)
+        settings = SettingsDetector.get_basic_settings()
         credentials = settings["credentials"]
         custom_bases = settings["custom_bases"]
 
         # Check if setup is needed
         show_warning = self.needs_onboarding()
 
-        # Display Header
-        self.console.print()
-        self.console.print(Align.center(self._create_header()))
-        self.console.print()
-        
-        # GitHub link - subtle
-        github_text = Text()
-        github_text.append("    GitHub: ", style="dim")
-        github_text.append("github.com/Mirrowel/LLM-API-Key-Proxy", style="dim cyan underline")
-        self.console.print(github_text)
-        self.console.print()
+        # Build title with GitHub link
+        self.console.print(
+            Panel.fit(
+                "[bold cyan]🚀 LLM API Key Proxy - Interactive Launcher[/bold cyan]",
+                border_style="cyan",
+            )
+        )
+        self.console.print(
+            "[dim]GitHub: [blue underline]https://github.com/Mirrowel/LLM-API-Key-Proxy[/blue underline][/dim]"
+        )
 
-        # Create cards
-        server_card = self._create_server_info_card()
-        status_card = self._create_status_card(settings, credentials, custom_bases)
-        
-        # Show cards side-by-side with better spacing
-        self.console.print(Columns([server_card, status_card], padding=2, expand=False))
-        self.console.print()
-
-        # Warnings
+        # Show warning if .env file doesn't exist
         if show_warning:
-            warning_content = Group(
-                Text("⚠️  Initial Setup Required", style="bold yellow"),
-                Text(""),
-                Text("The proxy needs configuration before first use:", style="white"),
-                Text("  • No .env file detected", style="dim"),
-                Text("  • Select option 3 to begin setup", style="dim"),
-            )
+            self.console.print()
             self.console.print(
                 Panel(
-                    warning_content,
+                    Text.from_markup(
+                        "⚠️  [bold yellow]INITIAL SETUP REQUIRED[/bold yellow]\n\n"
+                        "The proxy needs initial configuration:\n"
+                        "  ❌ No .env file found\n\n"
+                        "Why this matters:\n"
+                        "  • The .env file stores your credentials and settings\n"
+                        "  • PROXY_API_KEY protects your proxy from unauthorized access\n"
+                        "  • Provider API keys enable LLM access\n\n"
+                        "What to do:\n"
+                        '  1. Select option "3. Manage Credentials" to launch the credential tool\n'
+                        "  2. The tool will create .env and set up PROXY_API_KEY automatically\n"
+                        "  3. You can add provider credentials (API keys or OAuth)\n\n"
+                        "⚠️  Note: The credential tool adds PROXY_API_KEY by default.\n"
+                        "   You can remove it later if you want an unsecured proxy."
+                    ),
                     border_style="yellow",
-                    box=box.ROUNDED,
-                    padding=(1, 2),
+                    expand=False,
                 )
             )
-            self.console.print()
+        # Show security warning if PROXY_API_KEY is missing (but .env exists)
         elif not os.getenv("PROXY_API_KEY"):
-            warning_content = Group(
-                Text("⚠️  Security Warning", style="bold red"),
-                Text(""),
-                Text("PROXY_API_KEY is not set - proxy is unsecured!", style="white"),
-                Text("Set via option 2 or 3 to secure your proxy.", style="dim"),
-            )
+            self.console.print()
             self.console.print(
                 Panel(
-                    warning_content,
+                    Text.from_markup(
+                        "⚠️  [bold red]SECURITY WARNING: PROXY_API_KEY Not Set[/bold red]\n\n"
+                        "Your proxy is currently UNSECURED!\n"
+                        "Anyone can access it without authentication.\n\n"
+                        "This is a serious security risk if your proxy is accessible\n"
+                        "from the internet or untrusted networks.\n\n"
+                        "👉 [bold]Recommended:[/bold] Set PROXY_API_KEY in .env file\n"
+                        '   Use option "2. Configure Proxy Settings" → "3. Set Proxy API Key"\n'
+                        '   or option "3. Manage Credentials"'
+                    ),
                     border_style="red",
-                    box=box.ROUNDED,
-                    padding=(1, 2),
+                    expand=False,
                 )
             )
-            self.console.print()
 
-        # Menu
-        self.console.print(self._create_menu(show_warning))
+        # Show config
+        self.console.print()
+        self.console.print("[bold]📋 Proxy Configuration[/bold]")
+        self.console.print("━" * 70)
+        self.console.print(f"   Host:                {self.config.config['host']}")
+        self.console.print(f"   Port:                {self.config.config['port']}")
+        self.console.print(
+            f"   Request Logging:     {'✅ Enabled' if self.config.config['enable_request_logging'] else '❌ Disabled'}"
+        )
+
+        # Show actual API key value
+        proxy_key = os.getenv("PROXY_API_KEY")
+        if proxy_key:
+            self.console.print(f"   Proxy API Key:       {proxy_key}")
+        else:
+            self.console.print("   Proxy API Key:       [red]Not Set (INSECURE!)[/red]")
+
+        # Show status summary
+        self.console.print()
+        self.console.print("[bold]📊 Status Summary[/bold]")
+        self.console.print("━" * 70)
+        provider_count = len(credentials)
+        custom_count = len(custom_bases)
+
+        self.console.print(f"   Providers:           {provider_count} configured")
+        self.console.print(f"   Custom Providers:    {custom_count} configured")
+        # Note: provider_settings detection is deferred to avoid heavy imports on startup
+        has_advanced = bool(
+            settings["model_definitions"]
+            or settings["concurrency_limits"]
+            or settings["model_filters"]
+        )
+        self.console.print(
+            f"   Advanced Settings:   {'Active (view in menu 4)' if has_advanced else 'None (view menu 4 for details)'}"
+        )
+
+        # Show menu
+        self.console.print()
+        self.console.print("━" * 70)
+        self.console.print()
+        self.console.print("[bold]🎯 Main Menu[/bold]")
+        self.console.print()
+        if show_warning:
+            self.console.print("   1. ▶️  Run Proxy Server")
+            self.console.print("   2. ⚙️  Configure Proxy Settings")
+            self.console.print(
+                "   3. 🔑 Manage Credentials            ⬅️  [bold yellow]Start here![/bold yellow]"
+            )
+        else:
+            self.console.print("   1. ▶️  Run Proxy Server")
+            self.console.print("   2. ⚙️  Configure Proxy Settings")
+            self.console.print("   3. 🔑 Manage Credentials")
+
+        self.console.print("   4. 📊 View Provider & Advanced Settings")
+        self.console.print("   5. 🔄 Reload Configuration")
+        self.console.print("   6. ℹ️  About")
+        self.console.print("   7. 🚪 Exit")
+
+        self.console.print()
+        self.console.print("━" * 70)
         self.console.print()
 
         choice = Prompt.ask(
-            "[bright_cyan]›[/bright_cyan] Select option",
+            "Select option",
             choices=["1", "2", "3", "4", "5", "6", "7"],
             show_choices=False,
         )
@@ -526,11 +442,8 @@ class LauncherTUI:
         elif choice == "4":
             self.show_provider_settings_menu()
         elif choice == "5":
-            with self.console.status("[bright_cyan]Reloading configuration...[/bright_cyan]", spinner="dots"):
-                load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)
-                self.config = LauncherConfig()  # Reload config
-                self._invalidate_settings_cache()  # Force settings refresh
-                self._get_settings(force_refresh=True)  # Pre-load settings
+            load_dotenv(dotenv_path=_get_env_file(), override=True)
+            self.config = LauncherConfig()  # Reload config
             self.console.print("\n[green]✅ Configuration reloaded![/green]")
         elif choice == "6":
             self.show_about()
@@ -576,62 +489,43 @@ class LauncherTUI:
         """Display configuration sub-menu"""
         while True:
             clear_screen()
-            
+
+            self.console.print(
+                Panel.fit(
+                    "[bold cyan]⚙️  Proxy Configuration[/bold cyan]", border_style="cyan"
+                )
+            )
+
             self.console.print()
-            self.console.print(Panel(
-                "[bold bright_white]⚙️  Configuration Settings[/bold bright_white]",
-                border_style="bright_blue",
-                box=box.DOUBLE,
-                expand=False
-            ))
+            self.console.print("[bold]📋 Current Settings[/bold]")
+            self.console.print("━" * 70)
+            self.console.print(f"   Host:                {self.config.config['host']}")
+            self.console.print(f"   Port:                {self.config.config['port']}")
+            self.console.print(
+                f"   Request Logging:     {'✅ Enabled' if self.config.config['enable_request_logging'] else '❌ Disabled'}"
+            )
+            self.console.print(
+                f"   Proxy API Key:       {'✅ Set' if os.getenv('PROXY_API_KEY') else '❌ Not Set'}"
+            )
+
             self.console.print()
-
-            # Current Settings - modern card style
-            host = self.config.config['host']
-            port = self.config.config['port']
-            logging_enabled = self.config.config['enable_request_logging']
-            api_key_set = bool(os.getenv("PROXY_API_KEY"))
-            
-            settings_lines = [
-                f"  [bright_cyan]Host[/bright_cyan]           {host}",
-                f"  [bright_cyan]Port[/bright_cyan]           {port}",
-                f"  [bright_cyan]Logging[/bright_cyan]        {'[green]Enabled[/green]' if logging_enabled else '[dim]Disabled[/dim]'}",
-                f"  [bright_cyan]API Key[/bright_cyan]        {'[green]✓ Set[/green]' if api_key_set else '[red]✗ Not Set[/red]'}",
-            ]
-
-            self.console.print(Panel(
-                "\n".join(settings_lines),
-                title="[bold bright_white]Current Settings[/bold bright_white]",
-                title_align="left",
-                border_style="bright_cyan",
-                box=box.ROUNDED,
-                padding=(1, 2)
-            ))
+            self.console.print("━" * 70)
             self.console.print()
+            self.console.print("[bold]⚙️  Configuration Options[/bold]")
+            self.console.print()
+            self.console.print("   1. 🌐 Set Host IP")
+            self.console.print("   2. 🔌 Set Port")
+            self.console.print("   3. 🔑 Set Proxy API Key")
+            self.console.print("   4. 📝 Toggle Request Logging")
+            self.console.print("   5. 🔄 Reset to Default Settings")
+            self.console.print("   6. ↩️  Back to Main Menu")
 
-            # Menu - modern style
-            menu_lines = [
-                "  [bright_blue]1[/bright_blue]  🌐  Set Host IP",
-                "  [bright_blue]2[/bright_blue]  🔌  Set Port",
-                "  [bright_blue]3[/bright_blue]  🔑  Set Proxy API Key",
-                "  [bright_blue]4[/bright_blue]  📝  Toggle Request Logging",
-                "  [bright_blue]5[/bright_blue]  🔄  Reset to Defaults",
-                "",
-                "  [dim]6[/dim]  ↩   Back to Main Menu",
-            ]
-
-            self.console.print(Panel(
-                "\n".join(menu_lines),
-                title="[bold bright_white]Options[/bold bright_white]",
-                title_align="left",
-                border_style="bright_magenta",
-                box=box.ROUNDED,
-                padding=(1, 2)
-            ))
+            self.console.print()
+            self.console.print("━" * 70)
             self.console.print()
 
             choice = Prompt.ask(
-                "[bright_cyan]›[/bright_cyan] Select option",
+                "Select option",
                 choices=["1", "2", "3", "4", "5", "6"],
                 show_choices=False,
             )
@@ -788,123 +682,120 @@ class LauncherTUI:
     def show_provider_settings_menu(self):
         """Display provider/advanced settings (read-only + launch tool)"""
         clear_screen()
-        
-        self.console.print()
-        self.console.print(Panel(
-            "[bold bright_white]📊 Provider & Advanced Settings[/bold bright_white]",
-            border_style="bright_blue",
-            box=box.DOUBLE,
-            expand=False
-        ))
-        self.console.print()
 
-        settings = SettingsDetector.get_all_settings()
+        # Use basic settings to avoid heavy imports - provider_settings deferred to Settings Tool
+        settings = SettingsDetector.get_basic_settings()
+
         credentials = settings["credentials"]
         custom_bases = settings["custom_bases"]
         model_defs = settings["model_definitions"]
         concurrency = settings["concurrency_limits"]
         filters = settings["model_filters"]
-        provider_settings = settings.get("provider_settings", {})
 
-        # Providers Table - modern styling
-        prov_table = Table(
-            box=box.ROUNDED,
-            show_header=True,
-            header_style="bold bright_white",
-            border_style="bright_blue",
-            padding=(0, 1),
-            expand=False,
+        self.console.print(
+            Panel.fit(
+                "[bold cyan]📊 Provider & Advanced Settings[/bold cyan]",
+                border_style="cyan",
+            )
         )
-        prov_table.add_column("Provider", style="bright_cyan", min_width=15)
-        prov_table.add_column("API", justify="center", style="white", min_width=6)
-        prov_table.add_column("OAuth", justify="center", style="white", min_width=6)
-        prov_table.add_column("Custom", justify="center", min_width=8)
-        prov_table.add_column("Models", justify="center", min_width=8)
 
-        all_providers = set(credentials.keys()) | set(custom_bases.keys()) | set(model_defs.keys())
+        # Configured Providers
+        self.console.print()
+        self.console.print("[bold]📊 Configured Providers[/bold]")
+        self.console.print("━" * 70)
+        if credentials:
+            for provider, info in credentials.items():
+                provider_name = provider.title()
+                parts = []
+                if info["api_keys"] > 0:
+                    parts.append(
+                        f"{info['api_keys']} API key{'s' if info['api_keys'] > 1 else ''}"
+                    )
+                if info["oauth"] > 0:
+                    parts.append(
+                        f"{info['oauth']} OAuth credential{'s' if info['oauth'] > 1 else ''}"
+                    )
 
-        if not all_providers:
-            prov_table.add_row("[dim]No providers configured[/dim]", "-", "-", "-", "-")
+                display = " + ".join(parts)
+                if info["custom"]:
+                    display += " (Custom)"
+
+                self.console.print(f"   ✅ {provider_name:20} {display}")
         else:
-            for p in sorted(all_providers):
-                cred = credentials.get(p, {"api_keys": 0, "oauth": 0})
-                base = "[green]✓[/green]" if p in custom_bases else "[dim]–[/dim]"
-                models = str(model_defs.get(p, "[dim]–[/dim]")) if p in model_defs else "[dim]–[/dim]"
-                api_count = f"[green]{cred['api_keys']}[/green]" if cred["api_keys"] > 0 else "[dim]–[/dim]"
-                oauth_count = f"[green]{cred['oauth']}[/green]" if cred["oauth"] > 0 else "[dim]–[/dim]"
-                
-                prov_table.add_row(
-                    p.title(),
-                    api_count,
-                    oauth_count,
-                    base,
-                    models
+            self.console.print("   [dim]No providers configured[/dim]")
+
+        # Custom API Bases
+        if custom_bases:
+            self.console.print()
+            self.console.print("[bold]🌐 Custom API Bases[/bold]")
+            self.console.print("━" * 70)
+            for provider, base in custom_bases.items():
+                self.console.print(f"   • {provider:15} {base}")
+
+        # Model Definitions
+        if model_defs:
+            self.console.print()
+            self.console.print("[bold]📦 Provider Model Definitions[/bold]")
+            self.console.print("━" * 70)
+            for provider, count in model_defs.items():
+                self.console.print(
+                    f"   • {provider:15} {count} model{'s' if count > 1 else ''} configured"
                 )
 
-        self.console.print(prov_table)
+        # Concurrency Limits
+        if concurrency:
+            self.console.print()
+            self.console.print("[bold]⚡ Concurrency Limits[/bold]")
+            self.console.print("━" * 70)
+            for provider, limit in concurrency.items():
+                self.console.print(f"   • {provider:15} {limit} requests/key")
+            self.console.print("   • Default:        1 request/key (all others)")
+
+        # Model Filters (basic info only)
+        if filters:
+            self.console.print()
+            self.console.print("[bold]🎯 Model Filters[/bold]")
+            self.console.print("━" * 70)
+            for provider, filter_info in filters.items():
+                status_parts = []
+                if filter_info["has_whitelist"]:
+                    status_parts.append("Whitelist")
+                if filter_info["has_ignore"]:
+                    status_parts.append("Ignore list")
+                status = " + ".join(status_parts) if status_parts else "None"
+                self.console.print(f"   • {provider:15} ✅ {status}")
+
+        # Provider-Specific Settings (deferred to Settings Tool to avoid heavy imports)
+        self.console.print()
+        self.console.print("[bold]🔬 Provider-Specific Settings[/bold]")
+        self.console.print("━" * 70)
+        self.console.print(
+            "   [dim]Launch Settings Tool to view/configure provider-specific settings[/dim]"
+        )
+
+        # Actions
+        self.console.print()
+        self.console.print("━" * 70)
+        self.console.print()
+        self.console.print("[bold]💡 Actions[/bold]")
+        self.console.print()
+        self.console.print(
+            "   1. 🔧 Launch Settings Tool      (configure advanced settings)"
+        )
+        self.console.print("   2. ↩️  Back to Main Menu")
+
+        self.console.print()
+        self.console.print("━" * 70)
+        self.console.print(
+            "[dim]ℹ️  Advanced settings are stored in .env file.\n   Use the Settings Tool to configure them interactively.[/dim]"
+        )
+        self.console.print()
+        self.console.print(
+            "[dim]⚠️  Note: Settings Tool supports only common configuration types.\n   For complex settings, edit .env directly.[/dim]"
+        )
         self.console.print()
 
-        # Advanced Settings Table - modern styling
-        adv_providers = set(concurrency.keys()) | set(filters.keys()) | set(provider_settings.keys())
-        
-        if adv_providers:
-            adv_table = Table(
-                box=box.ROUNDED,
-                show_header=True,
-                header_style="bold bright_white",
-                border_style="bright_magenta",
-                padding=(0, 1),
-                expand=False,
-            )
-            adv_table.add_column("Provider", style="bright_cyan", min_width=15)
-            adv_table.add_column("Concurrency", justify="center", min_width=12)
-            adv_table.add_column("Filters", justify="center", min_width=15)
-            adv_table.add_column("Custom Settings", justify="center", min_width=15)
-
-            for p in sorted(adv_providers):
-                limit = str(concurrency.get(p)) if p in concurrency else "[dim]default[/dim]"
-                
-                filt = filters.get(p, {"has_whitelist": False, "has_ignore": False})
-                filt_parts = []
-                if filt["has_whitelist"]: filt_parts.append("[green]whitelist[/green]")
-                if filt["has_ignore"]: filt_parts.append("[yellow]ignore[/yellow]")
-                filt_str = ", ".join(filt_parts) if filt_parts else "[dim]–[/dim]"
-
-                mod_settings = provider_settings.get(p, 0)
-                mod_str = f"[magenta]{mod_settings} modified[/magenta]" if mod_settings > 0 else "[dim]–[/dim]"
-
-                adv_table.add_row(p.title(), limit, filt_str, mod_str)
-
-            self.console.print(adv_table)
-        else:
-            self.console.print(Panel(
-                "[dim]No advanced settings configured[/dim]",
-                border_style="dim",
-                box=box.ROUNDED,
-            ))
-        
-        self.console.print()
-
-        # Actions Menu - modern style
-        menu_lines = [
-            "  [bright_blue]1[/bright_blue]  🔧  Launch Settings Tool",
-            "",
-            "  [dim]2[/dim]  ↩   Back to Main Menu",
-        ]
-        
-        self.console.print(Panel(
-            "\n".join(menu_lines),
-            title="[bold bright_white]Actions[/bold bright_white]",
-            title_align="left",
-            border_style="bright_cyan",
-            box=box.ROUNDED,
-            padding=(1, 2)
-        ))
-        
-        self.console.print("[dim]ℹ️  Use the Settings Tool to configure advanced options interactively.[/dim]")
-        self.console.print()
-
-        choice = Prompt.ask("[bright_cyan]›[/bright_cyan] Select option", choices=["1", "2"], show_choices=False)
+        choice = Prompt.ask("Select option", choices=["1", "2"], show_choices=False)
 
         if choice == "1":
             self.launch_settings_tool()
@@ -947,95 +838,94 @@ class LauncherTUI:
         # Run the tool with from_launcher=True to skip duplicate loading screen
         run_credential_tool(from_launcher=True)
         # Reload environment after credential tool
-        load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)
-        self._invalidate_settings_cache()  # Force settings refresh after credential changes
+        load_dotenv(dotenv_path=_get_env_file(), override=True)
 
     def launch_settings_tool(self):
         """Launch settings configuration tool"""
-        from proxy_app.settings_tool import run_settings_tool
+        import time
+
+        clear_screen()
+
+        self.console.print("━" * 70)
+        self.console.print("Advanced Settings Configuration Tool")
+        self.console.print("━" * 70)
+
+        _start_time = time.time()
+
+        with self.console.status("Initializing settings tool...", spinner="dots"):
+            from proxy_app.settings_tool import run_settings_tool
+
+        _elapsed = time.time() - _start_time
+        self.console.print(f"✓ Settings tool ready in {_elapsed:.2f}s")
+
+        time.sleep(0.3)
 
         run_settings_tool()
         # Reload environment after settings tool
-        load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)
-        self._invalidate_settings_cache()  # Force settings refresh after settings changes
+        load_dotenv(dotenv_path=_get_env_file(), override=True)
 
     def show_about(self):
         """Display About page with project information"""
         clear_screen()
 
-        self.console.print()
-        self.console.print(Panel(
-            "[bold bright_white]ℹ️  About LLM API Key Proxy[/bold bright_white]",
-            border_style="bright_blue",
-            box=box.DOUBLE,
-            expand=False
-        ))
-        self.console.print()
-
-        # Project Info Card
-        project_info = Group(
-            Text("A lightweight, high-performance proxy server for managing", style="white"),
-            Text("LLM API keys with automatic rotation and OAuth support.", style="white"),
-            Text(""),
-            Text("GitHub: github.com/Mirrowel/LLM-API-Key-Proxy", style="dim cyan underline"),
+        self.console.print(
+            Panel.fit(
+                "[bold cyan]ℹ️  About LLM API Key Proxy[/bold cyan]", border_style="cyan"
+            )
         )
-        
-        self.console.print(Panel(
-            project_info,
-            title="[bold bright_white]📦 Project[/bold bright_white]",
-            title_align="left",
-            border_style="bright_cyan",
-            box=box.ROUNDED,
-            padding=(1, 2)
-        ))
+
+        self.console.print()
+        self.console.print("[bold]📦 Project Information[/bold]")
+        self.console.print("━" * 70)
+        self.console.print("   [bold cyan]LLM API Key Proxy[/bold cyan]")
+        self.console.print(
+            "   A lightweight, high-performance proxy server for managing"
+        )
+        self.console.print("   LLM API keys with automatic rotation and OAuth support")
+        self.console.print()
+        self.console.print(
+            "   [dim]GitHub:[/dim] [blue underline]https://github.com/Mirrowel/LLM-API-Key-Proxy[/blue underline]"
+        )
+
+        self.console.print()
+        self.console.print("[bold]✨ Key Features[/bold]")
+        self.console.print("━" * 70)
+        self.console.print(
+            "   • [green]Smart Key Rotation[/green] - Automatic rotation across multiple API keys"
+        )
+        self.console.print(
+            "   • [green]OAuth Support[/green] - Automated OAuth flows for supported providers"
+        )
+        self.console.print(
+            "   • [green]Multiple Providers[/green] - Support for 10+ LLM providers"
+        )
+        self.console.print(
+            "   • [green]Custom Providers[/green] - Easy integration of custom OpenAI-compatible APIs"
+        )
+        self.console.print(
+            "   • [green]Advanced Filtering[/green] - Model whitelists and ignore lists per provider"
+        )
+        self.console.print(
+            "   • [green]Concurrency Control[/green] - Per-key rate limiting and request management"
+        )
+        self.console.print(
+            "   • [green]Cost Tracking[/green] - Track usage and costs across all providers"
+        )
+        self.console.print(
+            "   • [green]Interactive TUI[/green] - Beautiful terminal interface for easy configuration"
+        )
+
+        self.console.print()
+        self.console.print("[bold]📝 License & Credits[/bold]")
+        self.console.print("━" * 70)
+        self.console.print("   Made with ❤️  by the community")
+        self.console.print("   Open source - contributions welcome!")
+
+        self.console.print()
+        self.console.print("━" * 70)
         self.console.print()
 
-        # Features - compact grid style
-        features = [
-            ("🔄", "Smart Rotation", "Auto-rotate across API keys"),
-            ("🔐", "OAuth Support", "Automated OAuth flows"),
-            ("🌐", "Multi-Provider", "10+ LLM providers"),
-            ("🔧", "Custom APIs", "OpenAI-compatible integration"),
-            ("🎯", "Filtering", "Model whitelists/ignore lists"),
-            ("⚡", "Concurrency", "Per-key rate limiting"),
-            ("💰", "Tracking", "Usage and cost monitoring"),
-            ("🎨", "Modern UI", "Beautiful terminal interface"),
-        ]
-        
-        feature_lines = []
-        for i in range(0, len(features), 2):
-            left = features[i]
-            right = features[i + 1] if i + 1 < len(features) else None
-            
-            left_text = f"  {left[0]} [bright_green]{left[1]}[/bright_green] [dim]{left[2]}[/dim]"
-            if right:
-                right_text = f"  {right[0]} [bright_green]{right[1]}[/bright_green] [dim]{right[2]}[/dim]"
-                feature_lines.append(f"{left_text:<45}{right_text}")
-            else:
-                feature_lines.append(left_text)
-        
-        self.console.print(Panel(
-            "\n".join(feature_lines),
-            title="[bold bright_white]✨ Features[/bold bright_white]",
-            title_align="left",
-            border_style="bright_green",
-            box=box.ROUNDED,
-            padding=(1, 2)
-        ))
-        self.console.print()
-
-        # Credits
-        self.console.print(Panel(
-            "  Made with [red]❤️[/red]  by the community\n  [dim]Open source - contributions welcome![/dim]",
-            title="[bold bright_white]📝 Credits[/bold bright_white]",
-            title_align="left",
-            border_style="bright_magenta",
-            box=box.ROUNDED,
-            padding=(1, 2)
-        ))
-        self.console.print()
-
-        Prompt.ask("[dim]Press Enter to return[/dim]", default="")
+        Prompt.ask("Press Enter to return to main menu", default="")
 
     def run_proxy(self):
         """Prepare and launch proxy in same window"""
@@ -1060,9 +950,9 @@ class LauncherTUI:
             )
 
             ensure_env_defaults()
-            load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)
+            load_dotenv(dotenv_path=_get_env_file(), override=True)
             run_credential_tool()
-            load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)
+            load_dotenv(dotenv_path=_get_env_file(), override=True)
 
             # Check again after credential tool
             if not os.getenv("PROXY_API_KEY"):
@@ -1100,26 +990,5 @@ class LauncherTUI:
 
 def run_launcher_tui():
     """Entry point for launcher TUI"""
-    # Show loading screen immediately
-    console.print()
-    
-    title = Text()
-    title.append("⚡ ", style="bright_yellow")
-    title.append("LLM API Key Proxy", style="bold bright_white")
-    
-    console.print(Panel(
-        Align.center(title),
-        border_style="bright_blue",
-        box=box.DOUBLE,
-        padding=(0, 3),
-        expand=False
-    ))
-    console.print()
-    
-    # Load with visual feedback
-    with console.status("[bright_cyan]Loading launcher...[/bright_cyan]", spinner="dots"):
-        tui = LauncherTUI()
-        # Pre-load settings during startup
-        tui._get_settings(force_refresh=True)
-    
+    tui = LauncherTUI()
     tui.run()

@@ -28,10 +28,6 @@ def main():
     """
     Constructs and runs the PyInstaller command to build the executable.
     """
-    # Get script directory for icon path
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    icon_path = os.path.join(script_dir, "icon.ico")
-    
     # Base PyInstaller command with optimizations
     command = [
         sys.executable,
@@ -40,8 +36,6 @@ def main():
         "--onefile",
         "--name",
         "proxy_app",
-        "--icon",
-        icon_path,
         "--paths",
         "../",
         "--paths",
@@ -50,19 +44,8 @@ def main():
         "--hidden-import=rotator_library",
         "--hidden-import=tiktoken_ext.openai_public",
         "--hidden-import=tiktoken_ext",
-        # Collect all dependencies
-        "--collect-all", "colorlog",
-        "--collect-all", "litellm",
-        "--hidden-import=litellm",
-        "--collect-all", "fastapi",
-        "--collect-all", "uvicorn",
-        "--collect-all", "dotenv",
-        "--collect-all", "httpx",
-        "--collect-all", "aiofiles",
-        "--collect-all", "aiohttp",
-        "--collect-all", "rich",
-        # Include web_ui directory
-        "--add-data", f"web_ui{os.pathsep}web_ui",
+        "--collect-data",
+        "litellm",
         # Optimization: Exclude unused heavy modules
         "--exclude-module=tkinter",
         "--exclude-module=matplotlib",

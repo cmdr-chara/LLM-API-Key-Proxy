@@ -34,9 +34,10 @@ class BackgroundRefresher:
         """Starts the background refresh task."""
         if self._task is None:
             self._task = asyncio.create_task(self._run())
-            lib_logger.debug(
+            lib_logger.info(
                 f"Background token refresher started. Check interval: {self._interval} seconds."
             )
+            # [NEW] Log if custom interval is set
 
     async def stop(self):
         """Stops the background refresh task."""
@@ -101,14 +102,14 @@ class BackgroundRefresher:
         )
 
         if total_providers > 0:
-            lib_logger.debug(
+            lib_logger.info(
                 f"Providers initialized: {total_providers} providers, {total_credentials} credentials"
             )
 
             # API providers line
             if api_summary:
                 api_parts = [f"{p}:{c}" for p, c in sorted(api_summary.items())]
-                lib_logger.debug(f"  API: {', '.join(api_parts)}")
+                lib_logger.info(f"  API: {', '.join(api_parts)}")
 
             # OAuth providers line with tier breakdown
             if oauth_summary:
@@ -121,7 +122,7 @@ class BackgroundRefresher:
                         oauth_parts.append(f"{provider}:{data['count']} ({tier_str})")
                     else:
                         oauth_parts.append(f"{provider}:{data['count']}")
-                lib_logger.debug(f"  OAuth: {', '.join(oauth_parts)}")
+                lib_logger.info(f"  OAuth: {', '.join(oauth_parts)}")
 
         self._initialized = True
 

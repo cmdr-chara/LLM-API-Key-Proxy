@@ -38,6 +38,11 @@ from .provider_interface import ProviderInterface, UsageResetConfigDef, QuotaGro
 from .antigravity_auth_base import AntigravityAuthBase
 from .provider_cache import ProviderCache
 from ..model_definitions import ModelDefinitions
+<<<<<<< HEAD
+=======
+from ..timeout_config import TimeoutConfig
+from ..utils.paths import get_logs_dir, get_cache_dir
+>>>>>>> origin/main
 
 
 # =============================================================================
@@ -105,12 +110,32 @@ DEFAULT_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
 ]
 
+<<<<<<< HEAD
 # Directory paths
 _BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 LOGS_DIR = _BASE_DIR / "logs" / "antigravity_logs"
 CACHE_DIR = _BASE_DIR / "cache" / "antigravity"
 GEMINI3_SIGNATURE_CACHE_FILE = CACHE_DIR / "gemini3_signatures.json"
 CLAUDE_THINKING_CACHE_FILE = CACHE_DIR / "claude_thinking.json"
+=======
+
+# Directory paths - use centralized path management
+def _get_antigravity_logs_dir():
+    return get_logs_dir() / "antigravity_logs"
+
+
+def _get_antigravity_cache_dir():
+    return get_cache_dir(subdir="antigravity")
+
+
+def _get_gemini3_signature_cache_file():
+    return _get_antigravity_cache_dir() / "gemini3_signatures.json"
+
+
+def _get_claude_thinking_cache_file():
+    return _get_antigravity_cache_dir() / "claude_thinking.json"
+
+>>>>>>> origin/main
 
 # Gemini 3 tool fix system instruction (prevents hallucination)
 DEFAULT_GEMINI3_SYSTEM_INSTRUCTION = """<CRITICAL_TOOL_USAGE_INSTRUCTIONS>
@@ -327,6 +352,36 @@ def _recursively_parse_json_strings(obj: Any) -> Any:
     return obj
 
 
+<<<<<<< HEAD
+=======
+def _inline_schema_refs(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Inline local $ref definitions before sanitization."""
+    if not isinstance(schema, dict):
+        return schema
+
+    defs = schema.get("$defs", schema.get("definitions", {}))
+    if not defs:
+        return schema
+
+    def resolve(node, seen=()):
+        if not isinstance(node, dict):
+            return [resolve(x, seen) for x in node] if isinstance(node, list) else node
+        if "$ref" in node:
+            ref = node["$ref"]
+            if ref in seen:  # Circular - drop it
+                return {k: resolve(v, seen) for k, v in node.items() if k != "$ref"}
+            for prefix in ("#/$defs/", "#/definitions/"):
+                if isinstance(ref, str) and ref.startswith(prefix):
+                    name = ref[len(prefix) :]
+                    if name in defs:
+                        return resolve(copy.deepcopy(defs[name]), seen + (ref,))
+            return {k: resolve(v, seen) for k, v in node.items() if k != "$ref"}
+        return {k: resolve(v, seen) for k, v in node.items()}
+
+    return resolve(schema)
+
+
+>>>>>>> origin/main
 def _clean_claude_schema(schema: Any) -> Any:
     """
     Recursively clean JSON Schema for Antigravity/Google's Proto-based API.
@@ -369,6 +424,7 @@ def _clean_claude_schema(schema: Any) -> Any:
         "$defs",
         "definitions",
         "title",
+<<<<<<< HEAD
         # Additional JSON Schema keywords not supported by Google's proto-based API
         "propertyNames",  # Validates property name strings
         "if",
@@ -388,6 +444,8 @@ def _clean_claude_schema(schema: Any) -> Any:
         "$anchor",
         "$dynamicRef",
         "$dynamicAnchor",
+=======
+>>>>>>> origin/main
     }
 
     # Handle 'anyOf' by taking the first option (Claude doesn't support anyOf)
@@ -403,7 +461,10 @@ def _clean_claude_schema(schema: Any) -> Any:
             return first_option
 
     cleaned = {}
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
     # Handle 'const' by converting to 'enum' with single value
     if "const" in schema:
         const_value = schema["const"]
@@ -444,7 +505,13 @@ class AntigravityFileLogger:
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         safe_model = model_name.replace("/", "_").replace(":", "_")
+<<<<<<< HEAD
         self.log_dir = LOGS_DIR / f"{timestamp}_{safe_model}_{uuid.uuid4()}"
+=======
+        self.log_dir = (
+            _get_antigravity_logs_dir() / f"{timestamp}_{safe_model}_{uuid.uuid4()}"
+        )
+>>>>>>> origin/main
 
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -677,9 +744,12 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
         error_obj = data.get("error", data)
         details = error_obj.get("details", [])
 
+<<<<<<< HEAD
         if not details:
             return None
 
+=======
+>>>>>>> origin/main
         result = {
             "retry_after": None,
             "reason": None,
@@ -730,6 +800,18 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
 
         # Return None if we couldn't extract retry_after
         if not result["retry_after"]:
+<<<<<<< HEAD
+=======
+            # Handle bare RESOURCE_EXHAUSTED without timing details
+            error_status = error_obj.get("status", "")
+            error_code = error_obj.get("code")
+
+            if error_status == "RESOURCE_EXHAUSTED" or error_code == 429:
+                result["retry_after"] = 60  # Default fallback
+                result["reason"] = result.get("reason") or "RESOURCE_EXHAUSTED"
+                return result
+
+>>>>>>> origin/main
             return None
 
         return result
@@ -737,12 +819,16 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
     def __init__(self):
         super().__init__()
         self.model_definitions = ModelDefinitions()
+<<<<<<< HEAD
         self.project_id_cache: Dict[
             str, str
         ] = {}  # Cache project ID per credential path
         self.project_tier_cache: Dict[
             str, str
         ] = {}  # Cache project tier per credential path (for debugging)
+=======
+        # NOTE: project_id_cache and project_tier_cache are inherited from AntigravityAuthBase
+>>>>>>> origin/main
 
         # Base URL management
         self._base_url_index = 0
@@ -754,13 +840,21 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
 
         # Initialize caches using shared ProviderCache
         self._signature_cache = ProviderCache(
+<<<<<<< HEAD
             GEMINI3_SIGNATURE_CACHE_FILE,
+=======
+            _get_gemini3_signature_cache_file(),
+>>>>>>> origin/main
             memory_ttl,
             disk_ttl,
             env_prefix="ANTIGRAVITY_SIGNATURE",
         )
         self._thinking_cache = ProviderCache(
+<<<<<<< HEAD
             CLAUDE_THINKING_CACHE_FILE,
+=======
+            _get_claude_thinking_cache_file(),
+>>>>>>> origin/main
             memory_ttl,
             disk_ttl,
             env_prefix="ANTIGRAVITY_THINKING",
@@ -890,9 +984,54 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
 
         This ensures all credential priorities are known before any API calls,
         preventing unknown credentials from getting priority 999.
+<<<<<<< HEAD
         """
         await self._load_persisted_tiers(credential_paths)
 
+=======
+
+        For credentials without persisted tier info (new or corrupted), performs
+        full discovery to ensure proper prioritization in sequential rotation mode.
+        """
+        # Step 1: Load persisted tiers from files
+        await self._load_persisted_tiers(credential_paths)
+
+        # Step 2: Identify credentials still missing tier info
+        credentials_needing_discovery = [
+            path
+            for path in credential_paths
+            if path not in self.project_tier_cache
+            and self._parse_env_credential_path(path) is None  # Skip env:// paths
+        ]
+
+        if not credentials_needing_discovery:
+            return  # All credentials have tier info
+
+        lib_logger.info(
+            f"Antigravity: Discovering tier info for {len(credentials_needing_discovery)} credential(s)..."
+        )
+
+        # Step 3: Perform discovery for each missing credential (sequential to avoid rate limits)
+        for credential_path in credentials_needing_discovery:
+            try:
+                auth_header = await self.get_auth_header(credential_path)
+                access_token = auth_header["Authorization"].split(" ")[1]
+                await self._discover_project_id(
+                    credential_path, access_token, litellm_params={}
+                )
+                discovered_tier = self.project_tier_cache.get(
+                    credential_path, "unknown"
+                )
+                lib_logger.debug(
+                    f"Discovered tier '{discovered_tier}' for {Path(credential_path).name}"
+                )
+            except Exception as e:
+                lib_logger.warning(
+                    f"Failed to discover tier for {Path(credential_path).name}: {e}. "
+                    f"Credential will use default priority."
+                )
+
+>>>>>>> origin/main
     async def _load_persisted_tiers(
         self, credential_paths: List[str]
     ) -> Dict[str, str]:
@@ -950,6 +1089,11 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
 
         return loaded
 
+<<<<<<< HEAD
+=======
+    # NOTE: _post_auth_discovery() is inherited from AntigravityAuthBase
+
+>>>>>>> origin/main
     # =========================================================================
     # MODEL UTILITIES
     # =========================================================================
@@ -1026,6 +1170,7 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
 
         return "thinking_" + "_".join(key_parts) if key_parts else None
 
+<<<<<<< HEAD
     # =========================================================================
     # PROJECT ID DISCOVERY
     # =========================================================================
@@ -1544,6 +1689,9 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
                 f"Failed to persist project metadata to credential file: {e}"
             )
             # Non-fatal - just means slower startup next time
+=======
+    # NOTE: _discover_project_id() and _persist_project_metadata() are inherited from AntigravityAuthBase
+>>>>>>> origin/main
 
     # =========================================================================
     # THINKING MODE SANITIZATION
@@ -2443,7 +2591,11 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
                 elif first_func_in_msg:
                     # Only add bypass to the first function call if no sig available
                     func_part["thoughtSignature"] = "skip_thought_signature_validator"
+<<<<<<< HEAD
                     lib_logger.warning(
+=======
+                    lib_logger.debug(
+>>>>>>> origin/main
                         f"Missing thoughtSignature for first func call {tool_id}, using bypass"
                     )
                 # Subsequent parallel calls: no signature field at all
@@ -2578,9 +2730,15 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
                                 f"Ignoring duplicate - this may indicate malformed conversation history."
                             )
                             continue
+<<<<<<< HEAD
                         #lib_logger.debug(
                         #    f"[Grouping] Collected response for ID: {resp_id}"
                         #)
+=======
+                        # lib_logger.debug(
+                        #    f"[Grouping] Collected response for ID: {resp_id}"
+                        # )
+>>>>>>> origin/main
                         collected_responses[resp_id] = resp
 
                 # Try to satisfy pending groups (newest first)
@@ -2595,10 +2753,17 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
                             collected_responses.pop(gid) for gid in group_ids
                         ]
                         new_contents.append({"parts": group_responses, "role": "user"})
+<<<<<<< HEAD
                         #lib_logger.debug(
                         #    f"[Grouping] Satisfied group with {len(group_responses)} responses: "
                         #    f"ids={group_ids}"
                         #)
+=======
+                        # lib_logger.debug(
+                        #    f"[Grouping] Satisfied group with {len(group_responses)} responses: "
+                        #    f"ids={group_ids}"
+                        # )
+>>>>>>> origin/main
                         pending_groups.pop(i)
                         break
                 continue
@@ -2618,10 +2783,17 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
                     ]
 
                     if call_ids:
+<<<<<<< HEAD
                         #lib_logger.debug(
                         #    f"[Grouping] Created pending group expecting {len(call_ids)} responses: "
                         #    f"ids={call_ids}, names={func_names}"
                         #)
+=======
+                        # lib_logger.debug(
+                        #    f"[Grouping] Created pending group expecting {len(call_ids)} responses: "
+                        #    f"ids={call_ids}, names={func_names}"
+                        # )
+>>>>>>> origin/main
                         pending_groups.append(
                             {
                                 "ids": call_ids,
@@ -2986,12 +3158,50 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
 
             if params and isinstance(params, dict):
                 schema = dict(params)
+<<<<<<< HEAD
                 schema.pop("$schema", None)
                 schema.pop("strict", None)
                 schema = _normalize_type_arrays(schema)
                 func_decl["parametersJsonSchema"] = schema
             else:
                 func_decl["parametersJsonSchema"] = {"type": "object", "properties": {}}
+=======
+                schema.pop("strict", None)
+                # Inline $ref definitions, then strip unsupported keywords
+                schema = _inline_schema_refs(schema)
+                schema = _clean_claude_schema(schema)
+                schema = _normalize_type_arrays(schema)
+
+                # Workaround: Antigravity/Gemini fails to emit functionCall
+                # when tool has empty properties {}. Inject a dummy optional
+                # parameter to ensure the tool call is emitted.
+                # Using a required confirmation parameter forces the model to
+                # commit to the tool call rather than just thinking about it.
+                props = schema.get("properties", {})
+                if not props:
+                    schema["properties"] = {
+                        "_confirm": {
+                            "type": "string",
+                            "description": "Enter 'yes' to proceed",
+                        }
+                    }
+                    schema["required"] = ["_confirm"]
+
+                func_decl["parametersJsonSchema"] = schema
+            else:
+                # No parameters provided - use default with required confirm param
+                # to ensure the tool call is emitted properly
+                func_decl["parametersJsonSchema"] = {
+                    "type": "object",
+                    "properties": {
+                        "_confirm": {
+                            "type": "string",
+                            "description": "Enter 'yes' to proceed",
+                        }
+                    },
+                    "required": ["_confirm"],
+                }
+>>>>>>> origin/main
 
             gemini_tools.append({"functionDeclarations": [func_decl]})
 
@@ -3116,17 +3326,31 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
         return antigravity_payload
 
     def _apply_claude_tool_transform(self, payload: Dict[str, Any]) -> None:
+<<<<<<< HEAD
         """Apply Claude-specific tool schema transformations."""
+=======
+        """Apply Claude-specific tool schema transformations.
+
+        Converts parametersJsonSchema to parameters and applies Claude-specific
+        schema sanitization (inlines $ref, removes unsupported JSON Schema fields).
+        """
+>>>>>>> origin/main
         tools = payload["request"].get("tools", [])
         for tool in tools:
             for func_decl in tool.get("functionDeclarations", []):
                 if "parametersJsonSchema" in func_decl:
                     params = func_decl["parametersJsonSchema"]
+<<<<<<< HEAD
                     params = (
                         _clean_claude_schema(params)
                         if isinstance(params, dict)
                         else params
                     )
+=======
+                    if isinstance(params, dict):
+                        params = _inline_schema_refs(params)
+                        params = _clean_claude_schema(params)
+>>>>>>> origin/main
                     func_decl["parameters"] = params
                     del func_decl["parametersJsonSchema"]
 
@@ -3355,6 +3579,16 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
         raw_args = func_call.get("args", {})
         parsed_args = _recursively_parse_json_strings(raw_args)
 
+<<<<<<< HEAD
+=======
+        # Strip the injected _confirm parameter ONLY if it's the sole parameter
+        # This ensures we only strip our injection, not legitimate user params
+        if isinstance(parsed_args, dict) and "_confirm" in parsed_args:
+            if len(parsed_args) == 1:
+                # _confirm is the only param - this was our injection
+                parsed_args.pop("_confirm")
+
+>>>>>>> origin/main
         tool_call = {
             "id": tool_id,
             "type": "function",
@@ -3640,7 +3874,11 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Host": host,
+<<<<<<< HEAD
             "User-Agent": "antigravity/1.11.9",
+=======
+            "User-Agent": "antigravity/1.11.9 windows/amd64",
+>>>>>>> origin/main
             "Accept": "text/event-stream" if stream else "application/json",
         }
 
@@ -3722,7 +3960,16 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
         file_logger: Optional[AntigravityFileLogger] = None,
     ) -> litellm.ModelResponse:
         """Handle non-streaming completion."""
+<<<<<<< HEAD
         response = await client.post(url, headers=headers, json=payload, timeout=600.0)
+=======
+        response = await client.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=TimeoutConfig.non_streaming(),
+        )
+>>>>>>> origin/main
         response.raise_for_status()
 
         data = response.json()
@@ -3755,11 +4002,23 @@ class AntigravityProvider(AntigravityAuthBase, ProviderInterface):
         }
 
         async with client.stream(
+<<<<<<< HEAD
             "POST", url, headers=headers, json=payload, timeout=600.0
         ) as response:
             if response.status_code >= 400:
                 # Read error body for raise_for_status to include in exception
                 # Terminal logging commented out - errors are logged in failures.log
+=======
+            "POST",
+            url,
+            headers=headers,
+            json=payload,
+            timeout=TimeoutConfig.streaming(),
+        ) as response:
+            if response.status_code >= 400:
+                # Read error body so it's available in response.text for logging
+                # The actual logging happens in failure_logger via _extract_response_body
+>>>>>>> origin/main
                 try:
                     await response.aread()
                     # lib_logger.error(
